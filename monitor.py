@@ -12,6 +12,7 @@ import json
 from wb_api import WildberriesAPI, ProductInfo, SlotInfo, AcceptanceCoefficient
 from sheets_parser import GoogleSheetsParser, MonitoringTask
 from config import config
+import telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -100,6 +101,9 @@ class SlotMonitor:
             "errors_count": 0,
             "last_check": None
         }
+        
+        # Telegram бот для уведомлений
+        self.telegram_bot = None
     
     async def start_monitoring(self):
         """
@@ -107,6 +111,13 @@ class SlotMonitor:
         Работает бесконечно, проверяя слоты с заданным интервалом
         """
         logger.info("🚀 Запуск мониторинга слотов WB")
+        
+        # Инициализируем Telegram бота
+        self.telegram_bot = await telegram_bot.initialize_bot()
+        if self.telegram_bot:
+            logger.info("✅ Telegram бот инициализирован для уведомлений")
+        else:
+            logger.warning("⚠️ Telegram бот не инициализирован - уведомления отключены")
         
         # Проверяем подключение к API
         if not await self.wb_api.test_connection():
@@ -332,12 +343,26 @@ class SlotMonitor:
             
             logger.info(f"🔔 {message}")
             
-            # TODO: Здесь будет отправка в Telegram и возможно телефонный звонок
-            # await self._send_telegram_notification(message)
-            # await self._make_voice_call(f"Найден слот с коэффициентом {slot.coefficient} для товара {slot.barcode}")
+            # Отправляем уведомление в Telegram
+            await self._send_telegram_notification(slot)
             
             # Сохраняем информацию о найденном слоте для аналитики
             await self._save_found_slot(slot)
+    
+    async def _send_telegram_notification(self, slot: FoundSlot):
+        """
+        Отправляет уведомление о найденном слоте в Telegram
+        """
+        try:
+            if self.telegram_bot:
+                # Конвертируем данные слота в формат для Telegram бота
+                slot_data = slot.to_dict()
+                await telegram_bot.send_slot_notification(slot_data)
+                logger.info(f"✅ Telegram уведомление отправлено для слота {slot.barcode}")
+            else:
+                logger.warning("⚠️ Telegram бот не инициализирован - пропускаем уведомление")
+        except Exception as e:
+            logger.error(f"❌ Ошибка отправки Telegram уведомления: {e}")
     
     async def get_statistics(self) -> Dict[str, Any]:
         """
