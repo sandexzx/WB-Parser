@@ -66,7 +66,15 @@ class FoundSlot:
             "found_at": self.found_at.isoformat(),
             "is_available": self.is_really_available(),
             "matches_criteria": self.matches_criteria(),
-            "task": asdict(self.monitoring_task)
+            "task": {
+                "barcode": self.monitoring_task.barcode,
+                "quantity": self.monitoring_task.quantity,
+                "allowed_warehouses": self.monitoring_task.allowed_warehouses,
+                "max_coefficient": self.monitoring_task.max_coefficient,
+                "date_from": self.monitoring_task.date_from.isoformat(),
+                "date_to": self.monitoring_task.date_to.isoformat(),
+                "is_active": self.monitoring_task.is_active
+            }
         }
 
 

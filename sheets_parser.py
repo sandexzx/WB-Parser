@@ -9,7 +9,7 @@ import os
 from google.oauth2.service_account import Credentials
 from typing import List, Dict, Any, Optional
 from dataclasses import dataclass
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 import logging
 import re
 
@@ -45,9 +45,15 @@ class MonitoringTask:
     is_active: bool = True          # Активна ли задача
     
     def is_date_valid(self) -> bool:
-        """Проверяет, попадает ли текущая дата в разрешенный диапазон"""
+        """Проверяет, актуальна ли задача для мониторинга"""
         today = date.today()
-        return self.date_from <= today <= self.date_to
+        # Разрешаем мониторинг, если:
+        # 1. Период еще не закончился (today <= date_to)
+        # 2. И до начала периода осталось не более 30 дней (можно настроить)
+        monitoring_start_buffer = 30  # дней до date_from когда можно начинать мониторинг
+        earliest_monitoring_date = self.date_from - timedelta(days=monitoring_start_buffer)
+        
+        return earliest_monitoring_date <= today <= self.date_to
 
 
 class GoogleSheetsParser:
