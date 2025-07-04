@@ -1,0 +1,36 @@
+# WB Slots Monitor - Python Dependencies
+
+# Асинхронные HTTP запросы
+aiohttp
+asyncio
+
+# Google Sheets API
+gspread
+google-auth
+google-auth-oauthlib
+google-auth-httplib2
+
+# Telegram Bot API  
+aiogram
+# База данных (SQLite встроена в Python, для PostgreSQL раскомментируй)
+# asyncpg==0.29.0
+# sqlalchemy==2.0.23
+
+# Планировщик задач
+APScheduler
+
+# Логирование и конфигурация
+python-dotenv
+
+# Работа с датами
+python-dateutil
+
+# JSON и сериализация
+orjson
+
+# Валидация данных
+pydantic
+
+# Для отладки и разработки
+pytest
+pytest-asyncio
