@@ -78,79 +78,94 @@ class GoogleSheetsParser:
     async def get_monitoring_tasks_from_cells(self, worksheet_name: str = None) -> List[MonitoringTask]:
         """
         Читает задачи мониторинга из конкретных ячеек таблицы (новый формат заказчика)
+        Если worksheet_name не указан, читает все листы
         """
         if not self.workbook:
             self._open_workbook()
         
+        all_tasks = []
+        
         try:
-            # Выбираем лист - если не указан, берем первый
+            # Если указан конкретный лист, читаем только его
             if worksheet_name:
-                worksheet = self.workbook.worksheet(worksheet_name)
+                worksheets = [self.workbook.worksheet(worksheet_name)]
             else:
-                worksheet = self.workbook.sheet1
+                # Читаем все листы
+                worksheets = self.workbook.worksheets()
             
-            logger.info(f"📄 Читаем лист: {worksheet.title}")
+            logger.info(f"📄 Будем читать {len(worksheets)} листов")
             
-            # Читаем конфигурационные ячейки
-            warehouse_names_str = worksheet.acell('B4').value or ""  # Названия складов
-            date_from_str = worksheet.acell('B5').value or ""        # Дата с
-            date_to_str = worksheet.acell('B6').value or ""          # Дата до
-            
-            logger.info(f"🏢 Склады из B4: {warehouse_names_str}")
-            logger.info(f"📅 Период: {date_from_str} - {date_to_str}")
-            
-            # Парсим общие настройки
-            date_from = self._parse_date(date_from_str)
-            date_to = self._parse_date(date_to_str)
-            
-            # Получаем ID складов по их названиям
-            allowed_warehouses = await self._get_warehouse_ids_by_names(warehouse_names_str)
-            
-            # Читаем товары из ячеек B8-B9 (баркоды) и C8-C9 (количества)
-            tasks = []
-            
-            # Проверяем строки 8, 9, 10... пока не найдем пустые ячейки
-            row = 8
-            while True:
-                barcode_cell = f'B{row}'
-                quantity_cell = f'C{row}'
-                
-                barcode = worksheet.acell(barcode_cell).value
-                quantity_str = worksheet.acell(quantity_cell).value
-                
-                # Если баркод пустой, прекращаем чтение
-                if not barcode or str(barcode).strip() == "":
-                    break
+            for worksheet in worksheets:
+                logger.info(f"📄 Читаем лист: {worksheet.title}")
                 
                 try:
-                    quantity = int(str(quantity_str).strip()) if quantity_str else 1
-                except ValueError:
-                    logger.warning(f"⚠️ Неверное количество в ячейке {quantity_cell}: {quantity_str}")
-                    quantity = 1
-                
-                # Создаем задачу мониторинга
-                task = MonitoringTask(
-                    barcode=str(barcode).strip(),
-                    quantity=quantity,
-                    allowed_warehouses=allowed_warehouses,
-                    max_coefficient=1.0,  # Пока ищем только бесплатные слоты
-                    date_from=date_from,
-                    date_to=date_to,
-                    is_active=True
-                )
-                
-                tasks.append(task)
-                logger.info(f"✅ Добавлена задача: {barcode} ({quantity} шт)")
-                
-                row += 1
-                
-                # Защита от бесконечного цикла
-                if row > 100:
-                    logger.warning("⚠️ Достигнут лимит строк (100), прекращаем чтение")
-                    break
+                    # Читаем конфигурационные ячейки
+                    warehouse_names_str = worksheet.acell('B4').value or ""  # Названия складов
+                    date_from_str = worksheet.acell('B5').value or ""        # Дата с
+                    date_to_str = worksheet.acell('B6').value or ""          # Дата до
+                    
+                    logger.info(f"🏢 Склады из B4: {warehouse_names_str}")
+                    logger.info(f"📅 Период: {date_from_str} - {date_to_str}")
+                    
+                    # Парсим общие настройки
+                    date_from = self._parse_date(date_from_str)
+                    date_to = self._parse_date(date_to_str)
+                    
+                    # Получаем ID складов по их названиям
+                    allowed_warehouses = await self._get_warehouse_ids_by_names(warehouse_names_str)
+                    
+                    # Читаем товары из ячеек B8-B9 (баркоды) и C8-C9 (количества)
+                    tasks = []
+                    
+                    # Проверяем строки 8, 9, 10... пока не найдем пустые ячейки
+                    row = 8
+                    while True:
+                        barcode_cell = f'B{row}'
+                        quantity_cell = f'C{row}'
+                        
+                        barcode = worksheet.acell(barcode_cell).value
+                        quantity_str = worksheet.acell(quantity_cell).value
+                        
+                        # Если баркод пустой, прекращаем чтение
+                        if not barcode or str(barcode).strip() == "":
+                            break
+                        
+                        try:
+                            quantity = int(str(quantity_str).strip()) if quantity_str else 1
+                        except ValueError:
+                            logger.warning(f"⚠️ Неверное количество в ячейке {quantity_cell}: {quantity_str}")
+                            quantity = 1
+                        
+                        # Создаем задачу мониторинга
+                        task = MonitoringTask(
+                            barcode=str(barcode).strip(),
+                            quantity=quantity,
+                            allowed_warehouses=allowed_warehouses,
+                            max_coefficient=1.0,  # Пока ищем только бесплатные слоты
+                            date_from=date_from,
+                            date_to=date_to,
+                            is_active=True
+                        )
+                        
+                        tasks.append(task)
+                        logger.info(f"✅ Добавлена задача: {barcode} ({quantity} шт) из листа {worksheet.title}")
+                        
+                        row += 1
+                        
+                        # Защита от бесконечного цикла
+                        if row > 100:
+                            logger.warning("⚠️ Достигнут лимит строк (100), прекращаем чтение")
+                            break
+                    
+                    logger.info(f"✅ Загружено {len(tasks)} задач из листа {worksheet.title}")
+                    all_tasks.extend(tasks)
+                    
+                except Exception as e:
+                    logger.error(f"❌ Ошибка чтения листа {worksheet.title}: {e}")
+                    continue
             
-            logger.info(f"✅ Загружено {len(tasks)} задач мониторинга из ячеек")
-            return tasks
+            logger.info(f"✅ Итого загружено {len(all_tasks)} задач мониторинга из {len(worksheets)} листов")
+            return all_tasks
             
         except Exception as e:
             logger.error(f"❌ Ошибка чтения таблицы: {e}")
@@ -422,44 +437,59 @@ class GoogleSheetsParser:
     def _get_monitoring_tasks_table_format(self, worksheet_name: str = None) -> List[MonitoringTask]:
         """
         Читает задачи в старом табличном формате (для совместимости)
+        Если worksheet_name не указан, читает все листы
         """
         if not self.workbook:
             self._open_workbook()
         
+        all_tasks = []
+        
         try:
-            # Выбираем лист
+            # Если указан конкретный лист, читаем только его
             if worksheet_name:
-                worksheet = self.workbook.worksheet(worksheet_name)
+                worksheets = [self.workbook.worksheet(worksheet_name)]
             else:
-                worksheet = self.workbook.sheet1
+                # Читаем все листы
+                worksheets = self.workbook.worksheets()
             
-            logger.info(f"📄 Читаем лист: {worksheet.title}")
+            logger.info(f"📄 Будем читать {len(worksheets)} листов в табличном формате")
             
-            # Получаем все данные
-            all_values = worksheet.get_all_values()
-            
-            if len(all_values) < 2:
-                logger.warning("⚠️ В таблице нет данных (только заголовки или пустая)")
-                return []
-            
-            # Первая строка - заголовки
-            headers = [h.strip().lower() for h in all_values[0]]
-            
-            # Ищем нужные колонки (гибко, по ключевым словам)
-            column_mapping = self._detect_columns(headers)
-            
-            tasks = []
-            for row_idx, row in enumerate(all_values[1:], start=2):
+            for worksheet in worksheets:
+                logger.info(f"📄 Читаем лист: {worksheet.title}")
+                
                 try:
-                    task = self._parse_row(row, column_mapping, row_idx)
-                    if task:
-                        tasks.append(task)
+                    # Получаем все данные
+                    all_values = worksheet.get_all_values()
+                    
+                    if len(all_values) < 2:
+                        logger.warning(f"⚠️ В листе {worksheet.title} нет данных (только заголовки или пустой)")
+                        continue
+                    
+                    # Первая строка - заголовки
+                    headers = [h.strip().lower() for h in all_values[0]]
+                    
+                    # Ищем нужные колонки (гибко, по ключевым словам)
+                    column_mapping = self._detect_columns(headers)
+                    
+                    tasks = []
+                    for row_idx, row in enumerate(all_values[1:], start=2):
+                        try:
+                            task = self._parse_row(row, column_mapping, row_idx)
+                            if task:
+                                tasks.append(task)
+                        except Exception as e:
+                            logger.warning(f"⚠️ Ошибка в строке {row_idx} листа {worksheet.title}: {e}")
+                            continue
+                    
+                    logger.info(f"✅ Загружено {len(tasks)} задач из листа {worksheet.title}")
+                    all_tasks.extend(tasks)
+                    
                 except Exception as e:
-                    logger.warning(f"⚠️ Ошибка в строке {row_idx}: {e}")
+                    logger.error(f"❌ Ошибка чтения листа {worksheet.title}: {e}")
                     continue
             
-            logger.info(f"✅ Загружено {len(tasks)} задач мониторинга")
-            return tasks
+            logger.info(f"✅ Итого загружено {len(all_tasks)} задач мониторинга из {len(worksheets)} листов")
+            return all_tasks
             
         except Exception as e:
             logger.error(f"❌ Ошибка чтения таблицы: {e}")
