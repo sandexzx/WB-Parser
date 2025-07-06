@@ -533,7 +533,6 @@ class WBSlotsBot:
 🚚 <b>Разгрузка:</b> {'✅ Разрешена' if slot_data.get('allow_unload', False) else '❌ Запрещена'}
 ⏰ <b>Найдено:</b> {slot_data.get('found_at', '').split('T')[1][:5] if slot_data.get('found_at') else 'N/A'}
 
-🔥 <b>ДЕЙСТВУЙТЕ БЫСТРО!</b> Слоты разбирают за секунды.
         """
         
         return message.strip()
