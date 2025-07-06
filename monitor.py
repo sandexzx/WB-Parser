@@ -242,9 +242,15 @@ class SlotMonitor:
             coef_index[key] = coef
         
         # Анализируем каждый товар
-        for slot, task in zip(slots, tasks):
+        for slot in slots:
             if slot.is_error:
                 logger.warning(f"⚠️ Ошибка для товара {slot.barcode}: {slot.error}")
+                continue
+            
+            # Находим соответствующую задачу по баркоду
+            task = next((t for t in tasks if t.barcode == slot.barcode), None)
+            if not task:
+                logger.warning(f"⚠️ Не найдена задача для товара {slot.barcode}")
                 continue
             
             # Ищем подходящие слоты для этого товара

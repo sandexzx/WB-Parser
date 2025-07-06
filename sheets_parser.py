@@ -111,8 +111,8 @@ class GoogleSheetsParser:
                     date_from = self._parse_date(date_from_str)
                     date_to = self._parse_date(date_to_str)
                     
-                    # Получаем ID складов по их названиям
-                    allowed_warehouses = await self._get_warehouse_ids_by_names(warehouse_names_str)
+                    # Получаем ID складов по их названиям для этого листа
+                    worksheet_allowed_warehouses = await self._get_warehouse_ids_by_names(warehouse_names_str)
                     
                     # Читаем товары из ячеек B8-B9 (баркоды) и C8-C9 (количества)
                     tasks = []
@@ -140,7 +140,7 @@ class GoogleSheetsParser:
                         task = MonitoringTask(
                             barcode=str(barcode).strip(),
                             quantity=quantity,
-                            allowed_warehouses=allowed_warehouses,
+                            allowed_warehouses=worksheet_allowed_warehouses,
                             max_coefficient=1.0,  # Пока ищем только бесплатные слоты
                             date_from=date_from,
                             date_to=date_to,
