@@ -346,19 +346,13 @@ detect_main_file() {
     
     cd "$PROJECT_DIR"
     
-    # Ищем главный файл в порядке приоритета
+    # Главный файл всегда run_with_bot.py
     if [[ -f "run_with_bot.py" ]]; then
         MAIN_FILE="run_with_bot.py"
-        log_info "Найден run_with_bot.py - используем для запуска полной системы"
-    elif [[ -f "main.py" ]]; then
-        MAIN_FILE="main.py"
-        log_info "Найден main.py - используем как основной файл"
-    elif [[ -f "bot_runner.py" ]]; then
-        MAIN_FILE="bot_runner.py"
-        log_info "Найден bot_runner.py - используем для запуска только бота"
+        log_info "Установлен run_with_bot.py как главный файл для запуска."
     else
-        log_error "Не найден подходящий файл для запуска!"
-        log_info "Ожидаемые файлы: run_with_bot.py, main.py, bot_runner.py"
+        log_error "Файл run_with_bot.py не найден в директории проекта ($PROJECT_DIR)!"
+        log_info "Убедитесь, что run_with_bot.py присутствует для корректного запуска."
         exit 1
     fi
     
