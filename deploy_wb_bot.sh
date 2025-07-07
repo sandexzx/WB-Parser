@@ -227,7 +227,6 @@ setup_project_directory() {
     # Создание директории
     log_info "Создание директории $PROJECT_DIR..."
     mkdir -p "$PROJECT_DIR"
-    mkdir -p "$PROJECT_DIR/logs"
     mkdir -p "$PROJECT_DIR/data"
     mkdir -p "$PROJECT_DIR/found_slots"
     
@@ -423,6 +422,7 @@ setup_permissions() {
     chmod 755 "$PROJECT_DIR"/*.py
     
     # Права на директории
+    mkdir -p "$PROJECT_DIR/logs" # Создаем папку logs здесь
     chmod 755 "$PROJECT_DIR/logs"
     chmod 755 "$PROJECT_DIR/data"
     chmod 755 "$PROJECT_DIR/found_slots"
