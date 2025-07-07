@@ -65,41 +65,33 @@ class AcceptanceCoefficient:
         return (self.coefficient == 0 or self.coefficient == 1) and self.allow_unload
 
 
-class RateLimiter:
+class SimpleRateLimiter:
     """
-    Улучшенный rate limiter с поддержкой разных лимитов для разных endpoints
+    Простой rate limiter для соблюдения базовых лимитов API
     """
     def __init__(self):
-        # Разные лимиты для разных endpoints
-        self.limits = {
-            'general': {'max_requests': 30, 'time_window': 60},  # Общие endpoints
-            'coefficients': {'max_requests': 6, 'time_window': 60}  # Коэффициенты
+        # Минимальные интервалы между запросами для безопасности
+        self.min_intervals = {
+            'general': 1.0,      # 1 секунда между обычными запросами
+            'coefficients': 1.0  # 1 секунда между запросами коэффициентов
         }
-        self.requests = {endpoint: [] for endpoint in self.limits.keys()}
+        self.last_request_time = {endpoint: 0 for endpoint in self.min_intervals.keys()}
     
     async def wait_if_needed(self, endpoint_type: str = 'general'):
-        """Ждет, если нужно соблюдать rate limit для конкретного endpoint"""
-        if endpoint_type not in self.limits:
+        """Ждет минимальный интервал между запросами"""
+        if endpoint_type not in self.min_intervals:
             endpoint_type = 'general'
         
-        limit_config = self.limits[endpoint_type]
-        requests_list = self.requests[endpoint_type]
-        
         now = time.time()
+        min_interval = self.min_intervals[endpoint_type]
+        time_since_last = now - self.last_request_time[endpoint_type]
         
-        # Убираем старые запросы
-        requests_list[:] = [req_time for req_time in requests_list 
-                           if now - req_time < limit_config['time_window']]
+        if time_since_last < min_interval:
+            sleep_time = min_interval - time_since_last
+            logger.debug(f"⏳ Пауза между запросами: {sleep_time:.1f}с")
+            await asyncio.sleep(sleep_time)
         
-        # Если достигли лимита, ждем
-        if len(requests_list) >= limit_config['max_requests']:
-            sleep_time = limit_config['time_window'] - (now - requests_list[0])
-            if sleep_time > 0:
-                logger.info(f"⏳ Rate limit для {endpoint_type}, ждем {sleep_time:.1f} секунд")
-                await asyncio.sleep(sleep_time)
-        
-        # Добавляем текущий запрос
-        requests_list.append(now)
+        self.last_request_time[endpoint_type] = time.time()
 
 
 class WildberriesAPI:
@@ -110,7 +102,7 @@ class WildberriesAPI:
     def __init__(self, api_key: str, base_url: str = "https://supplies-api.wildberries.ru"):
         self.api_key = api_key
         self.base_url = base_url
-        self.rate_limiter = RateLimiter()
+        self.rate_limiter = SimpleRateLimiter()
         
         # Заголовки для всех запросов
         self.headers = {
@@ -130,6 +122,7 @@ class WildberriesAPI:
         await self.rate_limiter.wait_if_needed(endpoint_type)
         
         url = f"{self.base_url}{endpoint}"
+        start_time = time.time()
         
         async with aiohttp.ClientSession() as session:
             try:
@@ -141,8 +134,11 @@ class WildberriesAPI:
                     params=params
                 ) as response:
                     
+                    # Измеряем время выполнения запроса
+                    request_duration = time.time() - start_time
+                    
                     # Логируем запрос для отладки
-                    logger.info(f"🔄 {method} {endpoint} -> {response.status}")
+                    logger.info(f"🔄 {method} {endpoint} -> {response.status} ({request_duration:.1f}с)")
                     
                     response_text = await response.text()
                     
@@ -338,6 +334,15 @@ class WildberriesAPI:
         except Exception as e:
             logger.error(f"❌ Ошибка при тестировании соединения: {e}")
             return False
+    
+    def get_rate_limiter_stats(self) -> Dict[str, Any]:
+        """
+        Возвращает статистику работы rate limiter
+        """
+        return {
+            'general_last_request': self.rate_limiter.last_request_time.get('general', 0),
+            'coefficients_last_request': self.rate_limiter.last_request_time.get('coefficients', 0)
+        }
 
 
 # Пример использования (для тестирования когда получим API ключ)

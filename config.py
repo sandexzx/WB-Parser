@@ -14,9 +14,14 @@ class Config:
     wb_api_key: str = ""  # Сюда вставим ключ от заказчика
     wb_base_url: str = "https://supplies-api.wildberries.ru"
     
-    # Rate limiting - WB разрешает максимум 30 запросов в минуту
+    # Rate limiting - WB разрешает максимум 30 запросов в минуту для складов, 6 для коэффициентов
     max_requests_per_minute: int = 30
     request_delay_seconds: float = 2.0  # 60/30 = 2 секунды между запросами
+    coefficients_requests_per_minute: int = 6  # Лимит для коэффициентов
+    
+    # Адаптивный мониторинг
+    enable_adaptive_monitoring: bool = True  # Включить адаптивные интервалы
+    min_monitoring_interval: int = 10  # Минимальный интервал между циклами (секунды)
     
     # Google Sheets настройки
     google_sheets_credentials_file: str = "credentials.json"
@@ -53,6 +58,9 @@ class Config:
             wb_base_url=os.getenv("WB_BASE_URL", "https://supplies-api.wildberries.ru"),
             max_requests_per_minute=int(os.getenv("MAX_REQUESTS_PER_MINUTE", "30")),
             request_delay_seconds=float(os.getenv("REQUEST_DELAY_SECONDS", "2.0")),
+            coefficients_requests_per_minute=int(os.getenv("COEFFICIENTS_REQUESTS_PER_MINUTE", "6")),
+            enable_adaptive_monitoring=os.getenv("ENABLE_ADAPTIVE_MONITORING", "True").lower() == "true",
+            min_monitoring_interval=int(os.getenv("MIN_MONITORING_INTERVAL", "10")),
             google_sheets_credentials_file=os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
             google_sheets_url=os.getenv("GOOGLE_SHEETS_URL", ""),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),

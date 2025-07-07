@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, date, timedelta
 import logging
 import re
+import time
+from gspread.exceptions import APIError
 
 # Load environment variables first
 try:
@@ -68,6 +70,8 @@ class GoogleSheetsParser:
         self.client = None
         self.workbook = None
         self._warehouse_cache = {}  # Кэш для складов
+        self._tasks_cache = {}      # Кэш для задач мониторинга
+        self._last_cache_update = None  # Время последнего обновления кэша
         
         # Области доступа для Google Sheets API
         self.scope = [
@@ -79,6 +83,7 @@ class GoogleSheetsParser:
         """
         Читает задачи мониторинга из конкретных ячеек таблицы (новый формат заказчика)
         Если worksheet_name не указан, читает все листы
+        ОПТИМИЗИРОВАНО: читает диапазоны ячеек вместо отдельных запросов
         """
         if not self.workbook:
             self._open_workbook()
@@ -99,10 +104,15 @@ class GoogleSheetsParser:
                 logger.info(f"📄 Читаем лист: {worksheet.title}")
                 
                 try:
-                    # Читаем конфигурационные ячейки
-                    warehouse_names_str = worksheet.acell('B4').value or ""  # Названия складов
-                    date_from_str = worksheet.acell('B5').value or ""        # Дата с
-                    date_to_str = worksheet.acell('B6').value or ""          # Дата до
+                    # ОПТИМИЗАЦИЯ: читаем все нужные ячейки одним запросом с обработкой ошибок
+                    # Читаем конфигурацию (B4:B6) и данные (B8:C100) за два запроса вместо 200+
+                    config_range = self._safe_range_request(worksheet, 'B4:B6')
+                    data_range = self._safe_range_request(worksheet, 'B8:C100')
+                    
+                    # Извлекаем конфигурационные данные
+                    warehouse_names_str = config_range[0].value or ""  # B4
+                    date_from_str = config_range[1].value or ""        # B5  
+                    date_to_str = config_range[2].value or ""          # B6
                     
                     logger.info(f"🏢 Склады из B4: {warehouse_names_str}")
                     logger.info(f"📅 Период: {date_from_str} - {date_to_str}")
@@ -119,23 +129,22 @@ class GoogleSheetsParser:
                     # Получаем ID складов по их названиям для этого листа
                     worksheet_allowed_warehouses = await self._get_warehouse_ids_by_names(warehouse_names_str)
                     
-                    # Читаем товары из ячеек B8-B9 (баркоды) и C8-C9 (количества)
+                    # ОПТИМИЗАЦИЯ: обрабатываем данные из уже загруженного диапазона
                     tasks = []
+                    empty_rows_count = 0
                     
-                    # Проверяем строки 8, 9, 10... с умной валидацией
-                    row = 8
-                    empty_rows_count = 0  # Счетчик пустых строк подряд
-                    
-                    while True:
-                        barcode_cell = f'B{row}'
-                        quantity_cell = f'C{row}'
-                        
-                        barcode = worksheet.acell(barcode_cell).value
-                        quantity_str = worksheet.acell(quantity_cell).value
+                    # data_range содержит ячейки B8:C100, обрабатываем их парами
+                    for i in range(0, len(data_range), 2):
+                        if i + 1 >= len(data_range):
+                            break
+                            
+                        barcode_cell = data_range[i]      # B колонка
+                        quantity_cell = data_range[i + 1] # C колонка
+                        row_number = 8 + i // 2
                         
                         # Нормализуем данные
-                        barcode_clean = str(barcode).strip() if barcode else ""
-                        quantity_clean = str(quantity_str).strip() if quantity_str else ""
+                        barcode_clean = str(barcode_cell.value).strip() if barcode_cell.value else ""
+                        quantity_clean = str(quantity_cell.value).strip() if quantity_cell.value else ""
                         
                         # Проверяем состояние строки
                         has_barcode = barcode_clean != ""
@@ -145,7 +154,7 @@ class GoogleSheetsParser:
                         if not has_barcode and not has_quantity:
                             # Обе ячейки пустые
                             empty_rows_count += 1
-                            logger.debug(f"🔍 Строка {row}: пустая ({empty_rows_count} подряд)")
+                            logger.debug(f"🔍 Строка {row_number}: пустая ({empty_rows_count} подряд)")
                             
                             if empty_rows_count >= 2:
                                 logger.info(f"⏹️ Две пустые строки подряд, прекращаем чтение листа {worksheet.title}")
@@ -153,22 +162,22 @@ class GoogleSheetsParser:
                                 
                         elif has_barcode and not has_quantity:
                             # Есть баркод, но нет количества
-                            logger.warning(f"⚠️ Строка {row}: пропускаем - есть баркод '{barcode_clean}', но нет количества")
-                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            logger.warning(f"⚠️ Строка {row_number}: пропускаем - есть баркод '{barcode_clean}', но нет количества")
+                            empty_rows_count = 0
                             
                         elif not has_barcode and has_quantity:
                             # Есть количество, но нет баркода
-                            logger.warning(f"⚠️ Строка {row}: пропускаем - есть количество '{quantity_clean}', но нет баркода")
-                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            logger.warning(f"⚠️ Строка {row_number}: пропускаем - есть количество '{quantity_clean}', но нет баркода")
+                            empty_rows_count = 0
                             
                         else:
                             # Есть и баркод, и количество - валидная строка
-                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            empty_rows_count = 0
                             
                             try:
                                 quantity = int(quantity_clean)
                             except ValueError:
-                                logger.warning(f"⚠️ Строка {row}: неверное количество '{quantity_clean}', используем 1")
+                                logger.warning(f"⚠️ Строка {row_number}: неверное количество '{quantity_clean}', используем 1")
                                 quantity = 1
                             
                             # Создаем задачу мониторинга
@@ -184,13 +193,6 @@ class GoogleSheetsParser:
                             
                             tasks.append(task)
                             logger.info(f"✅ Добавлена задача: {barcode_clean} ({quantity} шт) из листа {worksheet.title}")
-                        
-                        row += 1
-                        
-                        # Защита от бесконечного цикла
-                        if row > 100:
-                            logger.warning("⚠️ Достигнут лимит строк (100), прекращаем чтение")
-                            break
                     
                     logger.info(f"✅ Загружено {len(tasks)} задач из листа {worksheet.title}")
                     all_tasks.extend(tasks)
@@ -329,27 +331,45 @@ class GoogleSheetsParser:
             raise
     
     def _open_workbook(self):
-        """Открывает таблицу по URL"""
-        try:
-            if not self.client:
-                self._authenticate()
-            
-            # Извлекаем ID таблицы из URL
-            sheet_id = self._extract_sheet_id(self.sheet_url)
-            logger.info(f"📋 Пытаемся открыть таблицу с ID: {sheet_id}")
-            self.workbook = self.client.open_by_key(sheet_id)
-            logger.info(f"📊 Открыта таблица: {self.workbook.title}")
-            
-        except Exception as e:
-            logger.error(f"❌ Ошибка открытия таблицы: {e}")
-            # Добавляем детальную диагностику
-            if "404" in str(e):
-                logger.error("💡 Возможные причины ошибки 404:")
-                logger.error("  1. Service Account не имеет доступа к таблице")
-                logger.error("  2. Неправильный URL или ID таблицы")
-                logger.error("  3. Таблица удалена или перемещена")
-                logger.error("🔧 Решение: добавьте email из credentials.json в доступ к таблице")
-            raise
+        """Открывает таблицу по URL с обработкой ошибок лимитов"""
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                if not self.client:
+                    self._authenticate()
+                
+                # Извлекаем ID таблицы из URL
+                sheet_id = self._extract_sheet_id(self.sheet_url)
+                logger.info(f"📋 Пытаемся открыть таблицу с ID: {sheet_id}")
+                self.workbook = self.client.open_by_key(sheet_id)
+                logger.info(f"📊 Открыта таблица: {self.workbook.title}")
+                return
+                
+            except APIError as e:
+                if "429" in str(e) or "Quota exceeded" in str(e):
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(f"⏳ Превышен лимит API, ждем {wait_time} секунд перед повтором (попытка {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error("❌ Превышен лимит API после всех попыток")
+                        raise
+                else:
+                    raise
+                    
+            except Exception as e:
+                logger.error(f"❌ Ошибка открытия таблицы: {e}")
+                # Добавляем детальную диагностику
+                if "404" in str(e):
+                    logger.error("💡 Возможные причины ошибки 404:")
+                    logger.error("  1. Service Account не имеет доступа к таблице")
+                    logger.error("  2. Неправильный URL или ID таблицы")
+                    logger.error("  3. Таблица удалена или перемещена")
+                    logger.error("🔧 Решение: добавьте email из credentials.json в доступ к таблице")
+                raise
     
     def _extract_sheet_id(self, url: str) -> str:
         """
@@ -452,22 +472,42 @@ class GoogleSheetsParser:
         
         return warehouse_ids
     
-    async def get_monitoring_tasks(self, worksheet_name: str = None) -> List[MonitoringTask]:
+    async def get_monitoring_tasks(self, worksheet_name: str = None, use_cache: bool = True) -> List[MonitoringTask]:
         """
         Основная функция для чтения задач мониторинга
         Автоматически определяет формат таблицы и использует подходящий парсер
+        С кэшированием для уменьшения количества запросов к API
         """
+        # Проверяем кэш
+        if use_cache and self._should_use_cache():
+            cache_key = f"{worksheet_name or 'all'}"
+            if cache_key in self._tasks_cache:
+                logger.info(f"🚀 Используем кэшированные данные для {cache_key}")
+                return self._tasks_cache[cache_key]
+        
         try:
             # Пробуем новый формат с ячейками (формат заказчика)
             logger.info("🔄 Пытаемся прочитать таблицу в формате ячеек...")
-            return await self.get_monitoring_tasks_from_cells(worksheet_name)
+            tasks = await self.get_monitoring_tasks_from_cells(worksheet_name)
+            
+            # Сохраняем в кэш
+            if use_cache:
+                self._update_cache(worksheet_name, tasks)
+            
+            return tasks
             
         except Exception as e:
             logger.warning(f"⚠️ Не удалось прочитать формат ячеек: {e}")
             
             # Fallback на старый табличный формат
             logger.info("🔄 Пробуем старый табличный формат...")
-            return self._get_monitoring_tasks_table_format(worksheet_name)
+            tasks = self._get_monitoring_tasks_table_format(worksheet_name)
+            
+            # Сохраняем в кэш
+            if use_cache:
+                self._update_cache(worksheet_name, tasks)
+            
+            return tasks
     
     def _get_monitoring_tasks_table_format(self, worksheet_name: str = None) -> List[MonitoringTask]:
         """
@@ -626,6 +666,62 @@ class GoogleSheetsParser:
         except Exception as e:
             logger.error(f"❌ Ошибка парсинга строки {row_number}: {e}")
             return None
+
+    def _should_use_cache(self) -> bool:
+        """
+        Проверяет, нужно ли использовать кэш
+        Кэш актуален в течение 2 минут
+        """
+        if self._last_cache_update is None:
+            return False
+            
+        cache_age = (datetime.now() - self._last_cache_update).total_seconds()
+        return cache_age < 120  # 2 минуты
+    
+    def _update_cache(self, worksheet_name: str, tasks: List[MonitoringTask]):
+        """
+        Обновляет кэш с новыми задачами
+        """
+        cache_key = f"{worksheet_name or 'all'}"
+        self._tasks_cache[cache_key] = tasks
+        self._last_cache_update = datetime.now()
+        logger.info(f"💾 Кэш обновлен для {cache_key}: {len(tasks)} задач")
+    
+    def clear_cache(self):
+        """
+        Очищает кэш принудительно
+        """
+        self._tasks_cache.clear()
+        self._last_cache_update = None
+        logger.info("🗑️ Кэш очищен")
+    
+    def _safe_range_request(self, worksheet, range_name: str, max_retries: int = 3):
+        """
+        Безопасный запрос диапазона ячеек с обработкой ошибок лимитов API
+        """
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                return worksheet.range(range_name)
+                
+            except APIError as e:
+                if "429" in str(e) or "Quota exceeded" in str(e):
+                    if attempt < max_retries - 1:
+                        wait_time = retry_delay * (2 ** attempt)
+                        logger.warning(f"⏳ Превышен лимит API при чтении {range_name}, ждем {wait_time} секунд (попытка {attempt + 1}/{max_retries})")
+                        time.sleep(wait_time)
+                        continue
+                    else:
+                        logger.error(f"❌ Превышен лимит API после всех попыток для {range_name}")
+                        raise
+                else:
+                    logger.error(f"❌ Ошибка API при чтении {range_name}: {e}")
+                    raise
+                    
+            except Exception as e:
+                logger.error(f"❌ Неизвестная ошибка при чтении {range_name}: {e}")
+                raise
 
 
 # Пример использования

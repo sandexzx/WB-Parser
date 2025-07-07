@@ -4,6 +4,7 @@
 """
 import asyncio
 import logging
+import time
 from typing import List, Dict, Any, Optional, Set
 from datetime import datetime, timedelta
 from dataclasses import dataclass, asdict
@@ -104,13 +105,18 @@ class SlotMonitor:
         
         # Telegram бот для уведомлений
         self.telegram_bot = None
+        
+        # Отслеживание циклов мониторинга для соблюдения лимита 6/минуту
+        self.monitoring_cycles = []  # Времена запуска циклов
+        self.current_minute_start = None  # Начало текущей минуты
+        self.cycles_in_current_minute = 0  # Счетчик циклов в текущей минуте
     
     async def start_monitoring(self):
         """
         Запускает основной цикл мониторинга
-        Работает бесконечно, проверяя слоты с заданным интервалом
+        Работает бесконечно, проверяя слоты с адаптивным интервалом
         """
-        logger.info("🚀 Запуск мониторинга слотов WB")
+        logger.info("🚀 Запуск адаптивного мониторинга слотов WB")
         
         # Инициализируем Telegram бота
         self.telegram_bot = await telegram_bot.initialize_bot()
@@ -124,13 +130,21 @@ class SlotMonitor:
             logger.error("❌ Не удалось подключиться к WB API")
             return
         
+        # Адаптивный интервал мониторинга
+        last_cycle_duration = 0
+        
         while True:
             try:
+                cycle_start = time.time()
                 await self._perform_monitoring_cycle()
+                cycle_duration = time.time() - cycle_start
                 
-                # Ждем до следующей проверки
-                logger.info(f"😴 Ждем {config.check_interval_seconds} секунд до следующей проверки")
-                await asyncio.sleep(config.check_interval_seconds)
+                # Вычисляем паузу для равномерного распределения циклов
+                pause_duration = self._calculate_dynamic_pause(cycle_duration)
+                
+                logger.info(f"😴 Цикл завершен за {cycle_duration:.1f}с, пауза {pause_duration:.1f}с")
+                if pause_duration > 0:
+                    await asyncio.sleep(pause_duration)
                 
             except KeyboardInterrupt:
                 logger.info("⏹️ Получен сигнал остановки")
@@ -140,6 +154,55 @@ class SlotMonitor:
                 self.stats["errors_count"] += 1
                 # При ошибке ждем меньше, чтобы быстрее восстановиться
                 await asyncio.sleep(30)
+    
+    def _calculate_dynamic_pause(self, cycle_duration: float) -> float:
+        """
+        Вычисляет динамическую паузу для равномерного распределения 6 циклов на минуту
+        """
+        if not config.enable_adaptive_monitoring:
+            return config.check_interval_seconds
+        
+        now = time.time()
+        
+        # Если это первый цикл или прошла минута - начинаем новую минуту
+        if (self.current_minute_start is None or 
+            now - self.current_minute_start >= 60):
+            self.current_minute_start = now
+            self.cycles_in_current_minute = 1
+            logger.info(f"🕐 Начинаем новую минуту, цикл 1/6")
+        else:
+            self.cycles_in_current_minute += 1
+            logger.info(f"🕐 Цикл {self.cycles_in_current_minute}/6 в текущей минуте")
+        
+        # Если цикл медленный (>10 секунд) - запускаем следующий сразу
+        if cycle_duration >= 10:
+            logger.info(f"🐌 Медленный цикл ({cycle_duration:.1f}с) - запускаем следующий сразу")
+            return 0.1
+        
+        # Если выполнили 6 циклов - ждем до начала следующей минуты
+        if self.cycles_in_current_minute >= 6:
+            time_to_next_minute = 60 - (now - self.current_minute_start)
+            if time_to_next_minute > 0:
+                logger.info(f"✅ Выполнили 6 циклов, ждем до следующей минуты: {time_to_next_minute:.1f}с")
+                return time_to_next_minute
+            return 0.1
+        
+        # Рассчитываем равномерное распределение оставшихся циклов
+        elapsed_time = now - self.current_minute_start
+        remaining_time = 60 - elapsed_time
+        remaining_cycles = 6 - self.cycles_in_current_minute
+        
+        if remaining_cycles <= 0:
+            return 0.1
+        
+        # Пауза = оставшееся время / количество оставшихся циклов
+        optimal_pause = remaining_time / remaining_cycles
+        
+        # Минимальная пауза 0.1 секунды для корректной работы
+        pause = max(0.1, optimal_pause)
+        
+        logger.info(f"📊 Осталось {remaining_cycles} циклов за {remaining_time:.1f}с → пауза {pause:.1f}с")
+        return pause
     
     async def _perform_monitoring_cycle(self):
         """
