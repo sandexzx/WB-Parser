@@ -227,7 +227,6 @@ setup_project_directory() {
     # Создание директории
     log_info "Создание директории $PROJECT_DIR..."
     mkdir -p "$PROJECT_DIR"
-    mkdir -p "$PROJECT_DIR/data"
     mkdir -p "$PROJECT_DIR/found_slots"
     
     # Получение кода
@@ -424,7 +423,6 @@ setup_permissions() {
     # Права на директории
     mkdir -p "$PROJECT_DIR/logs" # Создаем папку logs здесь
     chmod 755 "$PROJECT_DIR/logs"
-    chmod 755 "$PROJECT_DIR/data"
     chmod 755 "$PROJECT_DIR/found_slots"
     
     log_success "Права доступа настроены"
@@ -548,7 +546,6 @@ show_management_help() {
     echo "│ Проект:        $PROJECT_DIR"
     echo "│ Конфигурация:  $PROJECT_DIR/.env"
     echo "│ Логи:          $PROJECT_DIR/logs/"
-    echo "│ Данные:        $PROJECT_DIR/data/"
     echo "│ Найденные слоты: $PROJECT_DIR/found_slots/"
     echo "│ Сервис:        /etc/systemd/system/$SERVICE_NAME.service"
     echo "└─────────────────────────────────────────────────────────────┘"
