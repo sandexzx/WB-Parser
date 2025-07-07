@@ -5,6 +5,12 @@
 import asyncio
 import logging
 import time
+import sys
+from pathlib import Path
+
+# Добавляем родительскую директорию в путь для импорта модулей
+sys.path.insert(0, str(Path(__file__).parent.parent))
+
 from monitor import SlotMonitor
 from config import config
 

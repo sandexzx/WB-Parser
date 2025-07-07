@@ -10,7 +10,7 @@ from pathlib import Path
 from datetime import datetime
 
 # Добавляем текущую папку в PYTHONPATH
-sys.path.insert(0, str(Path(__file__).parent))
+sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from config import config
 from telegram_bot import TelegramDatabase, TelegramUser, WBSlotsBot
