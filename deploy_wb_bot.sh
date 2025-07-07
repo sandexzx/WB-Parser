@@ -227,7 +227,6 @@ setup_project_directory() {
     # Создание директории
     log_info "Создание директории $PROJECT_DIR..."
     mkdir -p "$PROJECT_DIR"
-    mkdir -p "$PROJECT_DIR/found_slots"
     
     # Получение кода
     if [[ "$USE_GITHUB" == "true" ]]; then
@@ -422,6 +421,7 @@ setup_permissions() {
     
     # Права на директории
     mkdir -p "$PROJECT_DIR/logs" # Создаем папку logs здесь
+    mkdir -p "$PROJECT_DIR/found_slots" # Создаем папку found_slots здесь
     chmod 755 "$PROJECT_DIR/logs"
     chmod 755 "$PROJECT_DIR/found_slots"
     
