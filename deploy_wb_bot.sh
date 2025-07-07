@@ -82,7 +82,8 @@ collect_configuration() {
     
     # GitHub репозиторий
     echo -e "${CYAN}📂 Настройка источника кода:${NC}"
-    read -p "Введите URL GitHub репозитория (или нажмите Enter для локальной установки): " GITHUB_URL
+    GITHUB_URL="https://github.com/sandexzx/WB-Parser.git"
+    log_info "Используется репозиторий по умолчанию: $GITHUB_URL"
     
     if [[ -n "$GITHUB_URL" ]]; then
         read -p "Введите ветку (по умолчанию: main): " GITHUB_BRANCH
