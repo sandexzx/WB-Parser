@@ -107,6 +107,11 @@ class GoogleSheetsParser:
                     logger.info(f"🏢 Склады из B4: {warehouse_names_str}")
                     logger.info(f"📅 Период: {date_from_str} - {date_to_str}")
                     
+                    # Проверяем, заполнена ли ячейка со складами
+                    if not warehouse_names_str or warehouse_names_str.strip() == "":
+                        logger.warning(f"⚠️ Пропускаем лист {worksheet.title}: не указаны склады в ячейке B4")
+                        continue
+                    
                     # Парсим общие настройки
                     date_from = self._parse_date(date_from_str)
                     date_to = self._parse_date(date_to_str)
@@ -117,8 +122,10 @@ class GoogleSheetsParser:
                     # Читаем товары из ячеек B8-B9 (баркоды) и C8-C9 (количества)
                     tasks = []
                     
-                    # Проверяем строки 8, 9, 10... пока не найдем пустые ячейки
+                    # Проверяем строки 8, 9, 10... с умной валидацией
                     row = 8
+                    empty_rows_count = 0  # Счетчик пустых строк подряд
+                    
                     while True:
                         barcode_cell = f'B{row}'
                         quantity_cell = f'C{row}'
@@ -126,29 +133,57 @@ class GoogleSheetsParser:
                         barcode = worksheet.acell(barcode_cell).value
                         quantity_str = worksheet.acell(quantity_cell).value
                         
-                        # Если баркод пустой, прекращаем чтение
-                        if not barcode or str(barcode).strip() == "":
-                            break
+                        # Нормализуем данные
+                        barcode_clean = str(barcode).strip() if barcode else ""
+                        quantity_clean = str(quantity_str).strip() if quantity_str else ""
                         
-                        try:
-                            quantity = int(str(quantity_str).strip()) if quantity_str else 1
-                        except ValueError:
-                            logger.warning(f"⚠️ Неверное количество в ячейке {quantity_cell}: {quantity_str}")
-                            quantity = 1
+                        # Проверяем состояние строки
+                        has_barcode = barcode_clean != ""
+                        has_quantity = quantity_clean != ""
                         
-                        # Создаем задачу мониторинга
-                        task = MonitoringTask(
-                            barcode=str(barcode).strip(),
-                            quantity=quantity,
-                            allowed_warehouses=worksheet_allowed_warehouses,
-                            max_coefficient=1.0,  # Пока ищем только бесплатные слоты
-                            date_from=date_from,
-                            date_to=date_to,
-                            is_active=True
-                        )
-                        
-                        tasks.append(task)
-                        logger.info(f"✅ Добавлена задача: {barcode} ({quantity} шт) из листа {worksheet.title}")
+                        # Логика валидации строки
+                        if not has_barcode and not has_quantity:
+                            # Обе ячейки пустые
+                            empty_rows_count += 1
+                            logger.debug(f"🔍 Строка {row}: пустая ({empty_rows_count} подряд)")
+                            
+                            if empty_rows_count >= 2:
+                                logger.info(f"⏹️ Две пустые строки подряд, прекращаем чтение листа {worksheet.title}")
+                                break
+                                
+                        elif has_barcode and not has_quantity:
+                            # Есть баркод, но нет количества
+                            logger.warning(f"⚠️ Строка {row}: пропускаем - есть баркод '{barcode_clean}', но нет количества")
+                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            
+                        elif not has_barcode and has_quantity:
+                            # Есть количество, но нет баркода
+                            logger.warning(f"⚠️ Строка {row}: пропускаем - есть количество '{quantity_clean}', но нет баркода")
+                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            
+                        else:
+                            # Есть и баркод, и количество - валидная строка
+                            empty_rows_count = 0  # Сбрасываем счетчик пустых строк
+                            
+                            try:
+                                quantity = int(quantity_clean)
+                            except ValueError:
+                                logger.warning(f"⚠️ Строка {row}: неверное количество '{quantity_clean}', используем 1")
+                                quantity = 1
+                            
+                            # Создаем задачу мониторинга
+                            task = MonitoringTask(
+                                barcode=barcode_clean,
+                                quantity=quantity,
+                                allowed_warehouses=worksheet_allowed_warehouses,
+                                max_coefficient=1.0,  # Пока ищем только бесплатные слоты
+                                date_from=date_from,
+                                date_to=date_to,
+                                is_active=True
+                            )
+                            
+                            tasks.append(task)
+                            logger.info(f"✅ Добавлена задача: {barcode_clean} ({quantity} шт) из листа {worksheet.title}")
                         
                         row += 1
                         
