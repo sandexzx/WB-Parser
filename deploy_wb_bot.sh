@@ -22,7 +22,7 @@ NC='\033[0m' # No Color
 PROJECT_NAME="wb-slots-monitor"
 PROJECT_DIR="/opt/$PROJECT_NAME"
 SERVICE_NAME="wb-slots-monitor"
-USER_NAME="wbmonitor"
+USER_NAME="root"
 PYTHON_VERSION="3.12"
 VENV_PATH="$PROJECT_DIR/.venv"
 
@@ -174,7 +174,7 @@ setup_system() {
     log_info "Обновление списка пакетов..."
     apt update -qq
     
-    # Установка необходимых пакетов
+    # Установка необходимых пакетов (минимальный набор)
     log_info "Установка системных пакетов..."
     apt install -y \
         software-properties-common \
@@ -182,17 +182,11 @@ setup_system() {
         curl \
         wget \
         git \
-        sudo \
         systemd \
         python3-pip \
         python3-venv \
         python3-dev \
         sqlite3 \
-        nginx \
-        ufw \
-        htop \
-        nano \
-        vim \
         unzip \
         ca-certificates
     
@@ -207,17 +201,11 @@ setup_system() {
     log_success "Системные зависимости установлены"
 }
 
-# Создание пользователя для сервиса
+# Создание пользователя для сервиса (пропущено - работаем под root)
 create_service_user() {
-    log_step "Создание пользователя для сервиса"
-    
-    if ! id "$USER_NAME" &>/dev/null; then
-        log_info "Создание пользователя $USER_NAME..."
-        useradd --system --home-dir "$PROJECT_DIR" --shell /bin/bash "$USER_NAME"
-        log_success "Пользователь $USER_NAME создан"
-    else
-        log_info "Пользователь $USER_NAME уже существует"
-    fi
+    log_step "Использование root пользователя для сервиса"
+    log_info "Сервис будет работать под пользователем root"
+    log_success "Настройка пользователя завершена"
 }
 
 # Настройка директории проекта
@@ -383,12 +371,8 @@ StandardOutput=journal
 StandardError=journal
 SyslogIdentifier=$SERVICE_NAME
 
-# Безопасность
-NoNewPrivileges=true
-PrivateTmp=true
-ProtectSystem=strict
-ReadWritePaths=$PROJECT_DIR
-ProtectHome=true
+# Безопасность (упрощенная для root)
+NoNewPrivileges=false
 
 # Лимиты ресурсов
 LimitNOFILE=65536
@@ -409,38 +393,27 @@ EOF
 setup_permissions() {
     log_step "Настройка прав доступа"
     
-    # Изменение владельца директории
-    log_info "Настройка владельца файлов..."
-    chown -R "$USER_NAME:$USER_NAME" "$PROJECT_DIR"
+    # Создание необходимых директорий
+    log_info "Создание необходимых директорий..."
+    mkdir -p "$PROJECT_DIR/logs"
+    mkdir -p "$PROJECT_DIR/found_slots"
     
-    # Настройка прав на файлы
+    # Настройка прав на файлы (упрощенная для root)
     chmod 755 "$PROJECT_DIR"
-    chmod 644 "$PROJECT_DIR"/.env
+    chmod 644 "$PROJECT_DIR"/.env 2>/dev/null || true
     chmod 600 "$PROJECT_DIR"/credentials.json 2>/dev/null || true
-    chmod 755 "$PROJECT_DIR"/*.py
-    
-    # Права на директории
-    mkdir -p "$PROJECT_DIR/logs" # Создаем папку logs здесь
-    mkdir -p "$PROJECT_DIR/found_slots" # Создаем папку found_slots здесь
+    chmod 755 "$PROJECT_DIR"/*.py 2>/dev/null || true
     chmod 755 "$PROJECT_DIR/logs"
     chmod 755 "$PROJECT_DIR/found_slots"
     
     log_success "Права доступа настроены"
 }
 
-# Настройка базовой безопасности
+# Настройка базовой безопасности (пропущено для упрощения)
 setup_security() {
-    log_step "Настройка базовой безопасности"
-    
-    # Базовая настройка UFW
-    log_info "Настройка базового firewall..."
-    ufw --force reset > /dev/null 2>&1
-    ufw default deny incoming > /dev/null 2>&1
-    ufw default allow outgoing > /dev/null 2>&1
-    ufw allow ssh > /dev/null 2>&1
-    ufw --force enable > /dev/null 2>&1
-    
-    log_success "Базовая безопасность настроена"
+    log_step "Пропуск настройки firewall"
+    log_info "Настройка firewall пропущена для упрощения деплоя"
+    log_success "Настройка безопасности завершена"
 }
 
 # Тестирование установки
@@ -553,13 +526,13 @@ show_management_help() {
     echo -e "${CYAN}🔧 ОБСЛУЖИВАНИЕ:${NC}"
     echo "┌─────────────────────────────────────────────────────────────┐"
     echo "│ Редактировать конфигурацию:                               │"
-    echo "│   sudo nano $PROJECT_DIR/.env"
-    echo "│   sudo systemctl restart $SERVICE_NAME"
+    echo "│   nano $PROJECT_DIR/.env"
+    echo "│   systemctl restart $SERVICE_NAME"
     echo "│                                                             │"
     echo "│ Обновить код (если используется Git):                      │"
     echo "│   cd $PROJECT_DIR"
-    echo "│   sudo -u $USER_NAME git pull origin $GITHUB_BRANCH"
-    echo "│   sudo systemctl restart $SERVICE_NAME"
+    echo "│   git pull origin $GITHUB_BRANCH"
+    echo "│   systemctl restart $SERVICE_NAME"
     echo "│                                                             │"
     echo "│ Проверить работу бота:                                     │"
     echo "│   curl -s https://api.telegram.org/bot\$TELEGRAM_BOT_TOKEN/getMe"
