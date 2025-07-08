@@ -6,11 +6,12 @@ Telegram бот для уведомлений о найденных слотах
 import asyncio
 import logging
 from typing import List, Dict, Any, Optional, Set
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, date
 from dataclasses import dataclass
 import json
 import sqlite3
 from pathlib import Path
+import os
 
 from aiogram import Bot, Dispatcher, types
 from aiogram.filters import Command
@@ -19,6 +20,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from aiogram.utils.formatting import Text, Bold, Italic, Code
 
 from config import config
+from slot_utils import get_current_active_slots
 
 logger = logging.getLogger(__name__)
 
@@ -72,6 +74,20 @@ class TelegramDatabase:
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 last_seen TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 notification_settings TEXT
+            )
+        ''')
+        
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS user_notifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER,
+                slot_id TEXT,
+                barcode TEXT,
+                warehouse_id INTEGER,
+                slot_date TEXT,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY (user_id) REFERENCES users (user_id),
+                UNIQUE(user_id, slot_id)
             )
         ''')
         
@@ -185,6 +201,74 @@ class TelegramDatabase:
             "active_users": active_users,
             "inactive_users": total_users - active_users
         }
+    
+    def add_user_notification(self, user_id: int, slot_data: Dict[str, Any]):
+        """Добавляет запись об отправленном уведомлении"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        slot_id = f"{slot_data.get('barcode', '')}-{slot_data.get('warehouse_id', '')}-{slot_data.get('date', '')}"
+        
+        cursor.execute('''
+            INSERT OR IGNORE INTO user_notifications 
+            (user_id, slot_id, barcode, warehouse_id, slot_date)
+            VALUES (?, ?, ?, ?, ?)
+        ''', (
+            user_id,
+            slot_id,
+            slot_data.get('barcode', ''),
+            slot_data.get('warehouse_id', 0),
+            slot_data.get('date', '')
+        ))
+        
+        conn.commit()
+        conn.close()
+    
+    def has_user_seen_slot(self, user_id: int, slot_data: Dict[str, Any]) -> bool:
+        """Проверяет, видел ли пользователь уведомление об этом слоте"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        slot_id = f"{slot_data.get('barcode', '')}-{slot_data.get('warehouse_id', '')}-{slot_data.get('date', '')}"
+        
+        cursor.execute(
+            'SELECT COUNT(*) FROM user_notifications WHERE user_id = ? AND slot_id = ?',
+            (user_id, slot_id)
+        )
+        
+        count = cursor.fetchone()[0]
+        conn.close()
+        
+        return count > 0
+    
+    def get_unseen_slots_for_user(self, user_id: int, available_slots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Возвращает слоты, которые пользователь еще не видел"""
+        unseen_slots = []
+        
+        for slot_data in available_slots:
+            if not self.has_user_seen_slot(user_id, slot_data):
+                unseen_slots.append(slot_data)
+        
+        return unseen_slots
+    
+    def get_available_slots_from_files(self, days_back: int = 3) -> List[Dict[str, Any]]:
+        """Получает слоты из файлов за последние N дней"""
+        slots = []
+        today = date.today()
+        
+        for days in range(days_back):
+            check_date = today - timedelta(days=days)
+            filename = f"found_slots/slots_{check_date.strftime('%Y-%m-%d')}.json"
+            
+            if os.path.exists(filename):
+                try:
+                    with open(filename, "r", encoding="utf-8") as f:
+                        day_slots = json.load(f)
+                        slots.extend(day_slots)
+                except Exception as e:
+                    logger.error(f"Ошибка чтения файла {filename}: {e}")
+        
+        return slots
 
 
 class WBSlotsBot:
@@ -277,6 +361,11 @@ class WBSlotsBot:
         """
         
         await message.reply(welcome_text, parse_mode="HTML")
+        
+        # Отправляем актуальные слоты новому пользователю
+        current_active_slots = get_current_active_slots()
+        if current_active_slots:
+            await self.send_missed_notifications(user_id, current_active_slots)
     
     async def _handle_help(self, message: Message):
         """Обработчик команды /help"""
@@ -340,6 +429,11 @@ class WBSlotsBot:
             "Используйте /settings для настройки уведомлений.",
             parse_mode="HTML"
         )
+        
+        # Отправляем актуальные слоты новому подписчику
+        current_active_slots = get_current_active_slots()
+        if current_active_slots:
+            await self.send_missed_notifications(user_id, current_active_slots)
     
     async def _handle_unsubscribe(self, message: Message):
         """Обработчик команды /unsubscribe"""
@@ -448,6 +542,71 @@ class WBSlotsBot:
         
         await message.reply(settings_text, parse_mode="HTML")
     
+    async def send_missed_notifications(self, user_id: int, available_slots: List[Dict[str, Any]]):
+        """
+        Отправляет пропущенные уведомления новому подписчику
+        
+        Args:
+            user_id: ID пользователя
+            available_slots: Список доступных слотов
+        """
+        user = self.database.get_user(user_id)
+        if not user or not user.subscribed:
+            return
+        
+        # Получаем слоты, которые пользователь еще не видел
+        unseen_slots = self.database.get_unseen_slots_for_user(user_id, available_slots)
+        
+        if not unseen_slots:
+            return
+        
+        sent_count = 0
+        failed_count = 0
+        
+        for slot_data in unseen_slots:
+            try:
+                # Проверяем настройки пользователя
+                if not self._should_send_notification(user, slot_data):
+                    continue
+                
+                # Проверяем, не видел ли пользователь это уведомление
+                if self.database.has_user_seen_slot(user.user_id, slot_data):
+                    continue
+                
+                message_text = self._format_slot_message(slot_data)
+                
+                await self.bot.send_message(
+                    chat_id=user.user_id,
+                    text=message_text,
+                    parse_mode="HTML"
+                )
+                
+                # Записываем, что уведомление отправлено
+                self.database.add_user_notification(user.user_id, slot_data)
+                
+                sent_count += 1
+                
+                # Небольшая задержка между сообщениями
+                await asyncio.sleep(0.1)
+                
+            except Exception as e:
+                logger.error(f"Ошибка отправки пропущенного уведомления пользователю {user_id}: {e}")
+                failed_count += 1
+        
+        if sent_count > 0:
+            # Отправляем итоговое сообщение
+            summary_text = f"📊 Отправлено {sent_count} пропущенных уведомлений о слотах"
+            try:
+                await self.bot.send_message(
+                    chat_id=user_id,
+                    text=summary_text,
+                    parse_mode="HTML"
+                )
+            except Exception as e:
+                logger.error(f"Ошибка отправки итогового сообщения пользователю {user_id}: {e}")
+        
+        logger.info(f"Пользователю {user_id} отправлено {sent_count} пропущенных уведомлений, ошибок: {failed_count}")
+    
     async def send_slot_notification(self, slot_data: Dict[str, Any], user_ids: List[int] = None):
         """
         Отправляет уведомление о найденном слоте
@@ -479,11 +638,18 @@ class WBSlotsBot:
                 if not self._should_send_notification(user, slot_data):
                     continue
                 
+                # Проверяем, не видел ли пользователь это уведомление раньше
+                if self.database.has_user_seen_slot(user.user_id, slot_data):
+                    continue
+                
                 await self.bot.send_message(
                     chat_id=user.user_id,
                     text=message_text,
                     parse_mode="HTML"
                 )
+                
+                # Записываем, что уведомление отправлено
+                self.database.add_user_notification(user.user_id, slot_data)
                 
                 sent_count += 1
                 
@@ -678,6 +844,21 @@ async def get_bot_stats():
         "users": user_stats,
         "notifications": notification_stats
     }
+
+
+async def send_missed_notifications_to_user(user_id: int, available_slots: List[Dict[str, Any]] = None):
+    """Отправляет пропущенные уведомления пользователю"""
+    global telegram_bot
+    
+    if not telegram_bot:
+        logger.warning("⚠️ Telegram бот не инициализирован")
+        return
+    
+    if available_slots is None:
+        available_slots = get_current_active_slots()
+    
+    if available_slots:
+        await telegram_bot.send_missed_notifications(user_id, available_slots)
 
 
 # Основная функция для тестирования

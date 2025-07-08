@@ -13,7 +13,6 @@ import json
 from wb_api import WildberriesAPI, ProductInfo, SlotInfo, AcceptanceCoefficient
 from sheets_parser import GoogleSheetsParser, MonitoringTask
 from config import config
-import telegram_bot
 
 logger = logging.getLogger(__name__)
 
@@ -110,6 +109,13 @@ class SlotMonitor:
         self.monitoring_cycles = []  # Времена запуска циклов
         self.current_minute_start = None  # Начало текущей минуты
         self.cycles_in_current_minute = 0  # Счетчик циклов в текущей минуте
+        
+        # Текущие актуальные слоты для новых пользователей
+        self.current_active_slots = []  # Список текущих актуальных слотов
+        self.active_slots_file = "current_active_slots.json"
+        
+        # Загружаем существующие активные слоты при старте
+        self._load_active_slots()
     
     async def start_monitoring(self):
         """
@@ -119,11 +125,16 @@ class SlotMonitor:
         logger.info("🚀 Запуск адаптивного мониторинга слотов WB")
         
         # Инициализируем Telegram бота
-        self.telegram_bot = await telegram_bot.initialize_bot()
-        if self.telegram_bot:
-            logger.info("✅ Telegram бот инициализирован для уведомлений")
-        else:
-            logger.warning("⚠️ Telegram бот не инициализирован - уведомления отключены")
+        try:
+            from telegram_bot import initialize_bot
+            self.telegram_bot = await initialize_bot()
+            if self.telegram_bot:
+                logger.info("✅ Telegram бот инициализирован для уведомлений")
+            else:
+                logger.warning("⚠️ Telegram бот не инициализирован - уведомления отключены")
+        except ImportError:
+            logger.warning("⚠️ Telegram бот не доступен - уведомления отключены")
+            self.telegram_bot = None
         
         # Проверяем подключение к API
         if not await self.wb_api.test_connection():
@@ -384,38 +395,59 @@ class SlotMonitor:
         """
         Отправляет уведомления о найденных подходящих слотах
         """
+        if not found_slots:
+            return
+        
+        # Конвертируем найденные слоты в формат для сравнения
+        new_slots_data = [slot.to_dict() for slot in found_slots]
+        
+        # Проверяем, изменились ли слоты
+        if self._slots_changed(new_slots_data):
+            logger.info(f"📊 Слоты изменились, обновляем активные слоты")
+            
+            # Получаем только новые слоты для существующих пользователей
+            new_only_slots = self._get_new_slots(new_slots_data)
+            
+            # Обновляем актуальные слоты
+            self.current_active_slots = new_slots_data
+            self._save_active_slots(new_slots_data)
+            
+            # Отправляем уведомления только о новых слотах существующим пользователям
+            if new_only_slots:
+                logger.info(f"📤 Отправляем {len(new_only_slots)} новых слотов существующим пользователям")
+                await self._send_new_slots_to_existing_users(new_only_slots)
+            
+            # Отправляем все активные слоты новым пользователям
+            logger.info(f"📤 Актуальные слоты ({len(new_slots_data)}) готовы для новых пользователей")
+            await self._send_active_slots_to_new_users(new_slots_data)
+            
+        else:
+            logger.info(f"📊 Слоты не изменились, пропускаем уведомления")
+        
+        # Обновляем статистику
         for slot in found_slots:
-            # Создаем уникальный ключ для предотвращения дублирования уведомлений
             slot_key = f"{slot.barcode}_{slot.warehouse_id}_{slot.date.date()}_{slot.box_type_name}"
-            
-            if slot_key in self.notified_slots:
-                continue  # Уже уведомляли об этом слоте
-            
-            self.notified_slots.add(slot_key)
-            self.stats["slots_found"] += 1
-            
-            # Формируем детальное сообщение
-            message = f"""
-🎯 НАЙДЕН ВЫГОДНЫЙ СЛОТ!
-
-📦 Товар: {slot.barcode}
-📦 Количество: {slot.monitoring_task.quantity} шт
-🏢 Склад: {slot.warehouse_name} (ID: {slot.warehouse_id})
-💰 Коэффициент: x{slot.coefficient} (лимит: x{slot.monitoring_task.max_coefficient})
-📦 Тип упаковки: {slot.box_type_name}
-📅 Дата: {slot.date.strftime('%d.%m.%Y')}
-🚚 Разгрузка разрешена: {'✅ Да' if slot.allow_unload else '❌ Нет'}
-⏰ Найдено: {slot.found_at.strftime('%H:%M:%S')}
-
-            """
-            
-            logger.info(f"🔔 {message}")
-            
-            # Отправляем уведомление в Telegram
-            await self._send_telegram_notification(slot)
-            
-            # Сохраняем информацию о найденном слоте для аналитики
-            await self._save_found_slot(slot)
+            if slot_key not in self.notified_slots:
+                self.notified_slots.add(slot_key)
+                self.stats["slots_found"] += 1
+                
+                # Сохраняем информацию о найденном слоте для аналитики
+                await self._save_found_slot(slot)
+    
+    async def _send_new_slots_to_existing_users(self, new_slots: List[Dict[str, Any]]):
+        """Отправляет новые слоты существующим пользователям"""
+        for slot_data in new_slots:
+            try:
+                from telegram_bot import send_slot_notification
+                await send_slot_notification(slot_data)
+                logger.info(f"✅ Уведомление о новом слоте отправлено: {slot_data['barcode']}")
+            except Exception as e:
+                logger.error(f"❌ Ошибка отправки уведомления о новом слоте: {e}")
+    
+    async def _send_active_slots_to_new_users(self, active_slots: List[Dict[str, Any]]):
+        """Подготавливает активные слоты для новых пользователей"""
+        # Здесь мы просто обновляем данные - они будут использоваться при подписке новых пользователей
+        pass
     
     async def _send_telegram_notification(self, slot: FoundSlot):
         """
@@ -425,7 +457,8 @@ class SlotMonitor:
             if self.telegram_bot:
                 # Конвертируем данные слота в формат для Telegram бота
                 slot_data = slot.to_dict()
-                await telegram_bot.send_slot_notification(slot_data)
+                from telegram_bot import send_slot_notification
+                await send_slot_notification(slot_data)
                 logger.info(f"✅ Telegram уведомление отправлено для слота {slot.barcode}")
             else:
                 logger.warning("⚠️ Telegram бот не инициализирован - пропускаем уведомление")
@@ -493,6 +526,72 @@ class SlotMonitor:
             
         except Exception as e:
             logger.warning(f"⚠️ Ошибка сохранения слота: {e}")
+    
+    def _load_active_slots(self):
+        """Загружает текущие активные слоты из файла"""
+        try:
+            if os.path.exists(self.active_slots_file):
+                with open(self.active_slots_file, "r", encoding="utf-8") as f:
+                    slots_data = json.load(f)
+                    self.current_active_slots = slots_data
+                    logger.info(f"📥 Загружено {len(self.current_active_slots)} активных слотов")
+            else:
+                logger.info("📂 Файл активных слотов не найден, начинаем с пустого списка")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка загрузки активных слотов: {e}")
+            self.current_active_slots = []
+    
+    def _save_active_slots(self, slots: List[Dict[str, Any]]):
+        """Сохраняет текущие активные слоты в файл"""
+        try:
+            with open(self.active_slots_file, "w", encoding="utf-8") as f:
+                json.dump(slots, f, ensure_ascii=False, indent=2)
+            logger.debug(f"💾 Сохранено {len(slots)} активных слотов")
+        except Exception as e:
+            logger.warning(f"⚠️ Ошибка сохранения активных слотов: {e}")
+    
+    def _slots_changed(self, new_slots: List[Dict[str, Any]]) -> bool:
+        """Проверяет, изменились ли слоты по сравнению с предыдущим циклом"""
+        if len(new_slots) != len(self.current_active_slots):
+            return True
+        
+        # Создаем множества для сравнения (исключаем found_at из сравнения)
+        current_keys = set()
+        new_keys = set()
+        
+        for slot in self.current_active_slots:
+            key = f"{slot['barcode']}_{slot['warehouse_id']}_{slot['date']}_{slot['box_type_name']}_{slot['coefficient']}"
+            current_keys.add(key)
+        
+        for slot in new_slots:
+            key = f"{slot['barcode']}_{slot['warehouse_id']}_{slot['date']}_{slot['box_type_name']}_{slot['coefficient']}"
+            new_keys.add(key)
+        
+        return current_keys != new_keys
+    
+    def _get_new_slots(self, new_slots: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        """Возвращает только новые слоты (которых не было в предыдущем цикле)"""
+        if not self.current_active_slots:
+            return new_slots
+        
+        # Создаем множество текущих слотов (исключаем found_at из сравнения)
+        current_keys = set()
+        for slot in self.current_active_slots:
+            key = f"{slot['barcode']}_{slot['warehouse_id']}_{slot['date']}_{slot['box_type_name']}_{slot['coefficient']}"
+            current_keys.add(key)
+        
+        # Находим новые слоты
+        new_only = []
+        for slot in new_slots:
+            key = f"{slot['barcode']}_{slot['warehouse_id']}_{slot['date']}_{slot['box_type_name']}_{slot['coefficient']}"
+            if key not in current_keys:
+                new_only.append(slot)
+        
+        return new_only
+    
+    def get_current_active_slots(self) -> List[Dict[str, Any]]:
+        """Возвращает текущие активные слоты для новых пользователей"""
+        return self.current_active_slots.copy()
     
     async def get_found_slots_statistics(self) -> Dict[str, Any]:
         """
@@ -619,16 +718,22 @@ async def main():
         return
     
     # Создаем и запускаем монитор
-    monitor = SlotMonitor()
+    global slot_monitor
+    slot_monitor = SlotMonitor()
     
     try:
-        await monitor.start_monitoring()
+        await slot_monitor.start_monitoring()
     except KeyboardInterrupt:
         logger.info("🛑 Остановка по запросу пользователя")
     except Exception as e:
         logger.error(f"💥 Критическая ошибка: {e}")
     finally:
         logger.info("👋 Завершение работы монитора")
+
+
+# Глобальная переменная для доступа к монитору
+slot_monitor = None
+
 
 
 if __name__ == "__main__":
