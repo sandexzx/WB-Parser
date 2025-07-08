@@ -29,7 +29,6 @@ class Config:
     
     # Telegram бот
     telegram_bot_token: str = ""  # Токен бота для уведомлений
-    telegram_chat_id: str = ""   # ID чата для отправки уведомлений
     
     # База данных
     database_url: str = "sqlite:///wb_monitor.db"
@@ -64,7 +63,6 @@ class Config:
             google_sheets_credentials_file=os.getenv("GOOGLE_CREDENTIALS_FILE", "credentials.json"),
             google_sheets_url=os.getenv("GOOGLE_SHEETS_URL", ""),
             telegram_bot_token=os.getenv("TELEGRAM_BOT_TOKEN", ""),
-            telegram_chat_id=os.getenv("TELEGRAM_CHAT_ID", ""),
             database_url=os.getenv("DATABASE_URL", "sqlite:///wb_monitor.db"),
             log_level=os.getenv("LOG_LEVEL", "INFO"),
             log_file=os.getenv("LOG_FILE", "wb_monitor.log"),
@@ -78,8 +76,7 @@ class Config:
         required_fields = [
             "wb_api_key", 
             "google_sheets_url", 
-            "telegram_bot_token", 
-            "telegram_chat_id"
+            "telegram_bot_token"
         ]
         
         missing_fields = []

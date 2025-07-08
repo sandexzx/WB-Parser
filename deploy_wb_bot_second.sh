@@ -236,7 +236,7 @@ test_configuration() {
     
     # Проверка переменных окружения
     log_info "Проверка .env файла..."
-    if source "$PROJECT_DIR/.env" && [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$TELEGRAM_CHAT_ID" && -n "$WB_API_KEY" ]]; then
+    if source "$PROJECT_DIR/.env" && [[ -n "$TELEGRAM_BOT_TOKEN" && -n "$WB_API_KEY" ]]; then
         log_success "Основные переменные окружения настроены"
     else
         log_error "Проблема с переменными окружения в .env"

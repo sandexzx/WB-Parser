@@ -115,13 +115,6 @@ collect_configuration() {
         fi
     done
     
-    # Telegram Chat ID (исправлено)
-    while [[ -z "$TELEGRAM_CHAT_ID" ]]; do
-        read -p "Введите Telegram Chat ID (кому отправлять сообщения): " TELEGRAM_CHAT_ID
-        if [[ -z "$TELEGRAM_CHAT_ID" ]]; then
-            log_warning "Telegram Chat ID обязателен для отправки уведомлений!"
-        fi
-    done
     
     echo
     echo -e "${CYAN}📊 Google Sheets настройки:${NC}"
@@ -163,7 +156,6 @@ collect_configuration() {
     fi
     echo "│ WB API ключ: ${WB_API_KEY:0:10}..."
     echo "│ Telegram Token: ${TELEGRAM_BOT_TOKEN:0:15}..."
-    echo "│ Telegram Chat ID: $TELEGRAM_CHAT_ID"
     echo "│ Google Sheets: ${GOOGLE_SHEETS_URL:0:40}..."
     echo "│ Интервал проверки: $CHECK_INTERVAL сек"
     echo "│ Уровень логирования: $LOG_LEVEL"
@@ -322,7 +314,6 @@ GOOGLE_SHEETS_URL=$GOOGLE_SHEETS_URL
 
 # Telegram бот
 TELEGRAM_BOT_TOKEN=$TELEGRAM_BOT_TOKEN
-TELEGRAM_CHAT_ID=$TELEGRAM_CHAT_ID
 
 # База данных
 DATABASE_URL=sqlite:///wb_monitor.db

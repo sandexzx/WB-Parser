@@ -36,7 +36,6 @@ cp .env.example .env
 WB_API_KEY=ваш_api_ключ_от_wb
 GOOGLE_SHEETS_URL=ссылка_на_вашу_таблицу
 TELEGRAM_BOT_TOKEN=токен_вашего_бота
-TELEGRAM_CHAT_ID=id_чата_для_уведомлений
 ```
 
 ### 4. Настройка Google Sheets API
