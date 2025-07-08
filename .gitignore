@@ -5,3 +5,5 @@ __pycache__/
 *.log
 *.db
 questions.txt
+ToDo
+cleanup_wb_bot.sh
