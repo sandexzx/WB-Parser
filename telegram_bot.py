@@ -47,7 +47,6 @@ class TelegramUser:
                 "max_coefficient": 1.0,
                 "min_coefficient": 0.0,
                 "preferred_warehouses": [],
-                "quiet_hours": {"start": 23, "end": 7},
                 "instant_notifications": True
             }
 
@@ -392,7 +391,6 @@ class WBSlotsBot:
 ⚙️ <b>Настройки:</b>
 • Максимальный коэффициент для уведомлений
 • Предпочитаемые склады
-• Тихие часы (когда не присылать уведомления)
 • Мгновенные уведомления вкл/выкл
 
 💡 <b>Советы:</b>
@@ -474,7 +472,6 @@ class WBSlotsBot:
 ⚙️ <b>Настройки уведомлений:</b>
 • Макс. коэффициент: {user.notification_settings.get('max_coefficient', 1.0)}
 • Мин. коэффициент: {user.notification_settings.get('min_coefficient', 0.0)}
-• Тихие часы: {user.notification_settings.get('quiet_hours', {}).get('start', 23)}:00 - {user.notification_settings.get('quiet_hours', {}).get('end', 7)}:00
 • Мгновенные уведомления: {'✅' if user.notification_settings.get('instant_notifications', True) else '❌'}
 
 Используйте /settings для изменения настроек.
@@ -530,8 +527,6 @@ class WBSlotsBot:
 🏢 <b>Склады:</b>
 • <code>/set_warehouses 1234,5678</code> - предпочитаемые склады
 
-🔇 <b>Тихие часы:</b>
-• <code>/set_quiet_hours 23 7</code> - не беспокоить с 23:00 до 07:00
 
 ⚡ <b>Мгновенные уведомления:</b>
 • <code>/instant_on</code> - включить
@@ -724,20 +719,6 @@ class WBSlotsBot:
             warehouse_id = slot_data.get('warehouse_id')
             if warehouse_id not in preferred_warehouses:
                 return False
-        
-        # Проверяем тихие часы
-        quiet_hours = user.notification_settings.get('quiet_hours', {})
-        if quiet_hours:
-            current_hour = datetime.now().hour
-            start_hour = quiet_hours.get('start', 23)
-            end_hour = quiet_hours.get('end', 7)
-            
-            if start_hour > end_hour:  # Через полночь
-                if current_hour >= start_hour or current_hour <= end_hour:
-                    return False
-            else:  # В пределах одного дня
-                if start_hour <= current_hour <= end_hour:
-                    return False
         
         return True
     
