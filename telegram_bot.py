@@ -90,6 +90,99 @@ class TelegramDatabase:
             )
         ''')
         
+        cursor.execute('''
+            CREATE TABLE IF NOT EXISTS notification_stats (
+                id INTEGER PRIMARY KEY,
+                sent_today INTEGER DEFAULT 0,
+                sent_total INTEGER DEFAULT 0,
+                failed_today INTEGER DEFAULT 0,
+                failed_total INTEGER DEFAULT 0,
+                last_notification TEXT,
+                last_reset_date TEXT DEFAULT (date('now'))
+            )
+        ''')
+        
+        conn.commit()
+        conn.close()
+        
+        # Инициализируем статистику, если она не существует
+        self._init_stats()
+    
+    def _init_stats(self):
+        """Инициализирует статистику уведомлений в базе данных"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT COUNT(*) FROM notification_stats WHERE id = 1')
+        if cursor.fetchone()[0] == 0:
+            cursor.execute('''
+                INSERT INTO notification_stats (id, sent_today, sent_total, failed_today, failed_total, last_notification, last_reset_date)
+                VALUES (1, 0, 0, 0, 0, NULL, date('now'))
+            ''')
+        
+        conn.commit()
+        conn.close()
+    
+    def get_notification_stats(self) -> Dict[str, Any]:
+        """Получает статистику уведомлений из базы данных"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        cursor.execute('SELECT * FROM notification_stats WHERE id = 1')
+        row = cursor.fetchone()
+        
+        conn.close()
+        
+        if row:
+            return {
+                "sent_today": row[1],
+                "sent_total": row[2],
+                "failed_today": row[3],
+                "failed_total": row[4],
+                "last_notification": row[5],
+                "last_reset_date": row[6]
+            }
+        return {
+            "sent_today": 0,
+            "sent_total": 0,
+            "failed_today": 0,
+            "failed_total": 0,
+            "last_notification": None,
+            "last_reset_date": date.today().isoformat()
+        }
+    
+    def update_notification_stats(self, sent_count: int = 0, failed_count: int = 0):
+        """Обновляет статистику уведомлений"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        
+        # Проверяем, нужно ли сбросить дневные счетчики
+        today = date.today().isoformat()
+        cursor.execute('SELECT last_reset_date FROM notification_stats WHERE id = 1')
+        last_reset = cursor.fetchone()
+        
+        if last_reset and last_reset[0] != today:
+            # Сбрасываем дневные счетчики
+            cursor.execute('''
+                UPDATE notification_stats 
+                SET sent_today = 0, failed_today = 0, last_reset_date = ?
+                WHERE id = 1
+            ''', (today,))
+        
+        # Обновляем статистику
+        cursor.execute('''
+            UPDATE notification_stats 
+            SET sent_today = sent_today + ?, 
+                sent_total = sent_total + ?,
+                failed_today = failed_today + ?,
+                failed_total = failed_total + ?,
+                last_notification = CASE 
+                    WHEN ? > 0 THEN ? 
+                    ELSE last_notification 
+                END
+            WHERE id = 1
+        ''', (sent_count, sent_count, failed_count, failed_count, sent_count, datetime.now().strftime('%d.%m.%Y %H:%M')))
+        
         conn.commit()
         conn.close()
     
@@ -281,14 +374,8 @@ class WBSlotsBot:
         # Настройка обработчиков
         self._setup_handlers()
         
-        # Статистика отправленных уведомлений
-        self.notification_stats = {
-            "sent_today": 0,
-            "sent_total": 0,
-            "failed_today": 0,
-            "failed_total": 0,
-            "last_notification": None
-        }
+        # Загружаем статистику уведомлений из базы данных
+        self.notification_stats = self.database.get_notification_stats()
     
     def _setup_handlers(self):
         """Настраивает обработчики команд и сообщений"""
@@ -588,6 +675,12 @@ class WBSlotsBot:
                 logger.error(f"Ошибка отправки пропущенного уведомления пользователю {user_id}: {e}")
                 failed_count += 1
         
+        # Обновляем статистику в базе данных
+        self.database.update_notification_stats(sent_count, failed_count)
+        
+        # Обновляем локальную статистику
+        self.notification_stats = self.database.get_notification_stats()
+        
         if sent_count > 0:
             # Отправляем итоговое сообщение
             summary_text = f"📊 Отправлено {sent_count} пропущенных уведомлений о слотах"
@@ -652,12 +745,11 @@ class WBSlotsBot:
                 logger.error(f"Ошибка отправки уведомления пользователю {user.user_id}: {e}")
                 failed_count += 1
         
-        # Обновляем статистику
-        self.notification_stats["sent_today"] += sent_count
-        self.notification_stats["sent_total"] += sent_count
-        self.notification_stats["failed_today"] += failed_count
-        self.notification_stats["failed_total"] += failed_count
-        self.notification_stats["last_notification"] = datetime.now().strftime('%d.%m.%Y %H:%M')
+        # Обновляем статистику в базе данных
+        self.database.update_notification_stats(sent_count, failed_count)
+        
+        # Обновляем локальную статистику
+        self.notification_stats = self.database.get_notification_stats()
         
         logger.info(f"Уведомление отправлено {sent_count} пользователям, ошибок: {failed_count}")
     
