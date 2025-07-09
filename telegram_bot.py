@@ -740,11 +740,30 @@ class WBSlotsBot:
 📦 <b>Тип упаковки:</b> {slot_data.get('box_type_name', 'N/A')}
 📅 <b>Дата:</b> {date_str}
 🚚 <b>Разгрузка:</b> {'✅ Разрешена' if slot_data.get('allow_unload', False) else '❌ Запрещена'}
-⏰ <b>Найдено:</b> {slot_data.get('found_at', '').split('T')[1][:5] if slot_data.get('found_at') else 'N/A'}
+⏰ <b>Найдено:</b> {self._format_time_with_offset(slot_data.get('found_at', ''))}
 
         """
         
         return message.strip()
+    
+    def _format_time_with_offset(self, found_at: str) -> str:
+        """Форматирует время с учетом часового пояса (+3 часа к UTC)"""
+        if not found_at:
+            return 'N/A'
+        
+        try:
+            # Парсим время из строки
+            if 'T' in found_at:
+                time_part = found_at.split('T')[1][:5]  # Берем только HH:MM
+                # Преобразуем в datetime для добавления 3 часов
+                dt = datetime.fromisoformat(found_at.replace('Z', '+00:00'))
+                # Добавляем 3 часа
+                dt_moscow = dt + timedelta(hours=3)
+                return dt_moscow.strftime('%H:%M')
+            else:
+                return found_at
+        except Exception:
+            return found_at if found_at else 'N/A'
     
     def _should_send_notification(self, user: TelegramUser, slot_data: Dict[str, Any]) -> bool:
         """Проверяет, нужно ли отправлять уведомление пользователю"""
