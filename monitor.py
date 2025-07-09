@@ -342,6 +342,10 @@ class SlotMonitor:
                                               coef_index: Dict) -> List[FoundSlot]:
         """
         Находит подходящие слоты с учетом коэффициентов приемки и критериев задачи
+        
+        Фильтрация по типам упаковки:
+        - Коледино (ID: 507) и Щербинка (ID: 336442) - только монопаллеты (box_type_id = 2)
+        - Все остальные склады - только короба (box_type_id = 1)
         """
         suitable_slots = []
         
@@ -360,8 +364,16 @@ class SlotMonitor:
             end_date = task.date_to
             
             while check_date <= end_date:
-                # Проверяем разные типы упаковки
-                for box_type_id in [1, 2, 6]:  # Основные типы: обычная, монопаллет, суперсейф
+                # Определяем разрешенные типы упаковки в зависимости от склада
+                # Коледино (507) и Щербинка (336442) - только монопаллеты (box_type_id = 2)
+                # Остальные склады - только короба (box_type_id = 1)
+                if warehouse_id in [507, 336442]:  # Коледино и Щербинка
+                    allowed_box_types = [2]  # Только монопаллеты
+                else:
+                    allowed_box_types = [1]  # Только короба
+                
+                # Проверяем разрешенные типы упаковки для данного склада
+                for box_type_id in allowed_box_types:
                     coef_key = (warehouse_id, check_date, box_type_id)
                     
                     if coef_key in coef_index:
